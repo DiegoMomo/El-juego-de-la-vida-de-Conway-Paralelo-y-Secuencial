@@ -1,30 +1,27 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from multiprocessing import Pool, cpu_count, Lock
+from multiprocessing import Pool, cpu_count
 import time
 
-# Declaración global del mutex
-mutex = Lock()
-
-def vecinos(i, j, rows, cols):
+def vecinos(i, j):
     return [(i+1, j), (i+1, j+1), (i, j+1), (i-1, j+1),
             (i-1, j), (i-1, j-1), (i, j-1), (i+1, j-1)]
 
-def contar_vecinos(viva, rows, cols):
+def contar_vecinos(matriz, rows, cols):
     contador = np.zeros((rows, cols), dtype=int)
     for i in range(rows):
         for j in range(cols):
-            for v in vecinos(i, j, rows, cols):
+            for v in vecinos(i, j):
                 if 0 <= v[0] < rows and 0 <= v[1] < cols:
-                    contador[i, j] += viva[v[0], v[1]]
+                    contador[i, j] += matriz[v[0], v[1]]
     return contador
 
 def siguiente_generacion(submatriz, rows, cols):
     nueva_generacion = np.zeros(submatriz.shape, dtype=int)
     contador = contar_vecinos(submatriz, submatriz.shape[0], cols)
     for i in range(submatriz.shape[0]):
-        for j in range(cols):
+        for j in range(submatriz.shape[1]):
             if submatriz[i, j] == 1:
                 if contador[i, j] < 2 or contador[i, j] > 3:
                     nueva_generacion[i, j] = 0
@@ -48,24 +45,20 @@ def juego_vida_secuencial(rows, cols, num_generaciones):
     tiempo_ejecucion = tiempo_fin - tiempo_inicio
     return tiempo_ejecucion, generaciones
 
-# Función auxiliar para envolver el cálculo de siguiente_generacion con un mutex
-def siguiente_generacion_wrapper(submatriz, rows, cols):
-    with mutex:
-        return siguiente_generacion(submatriz, rows, cols)
-
 def juego_vida_paralelo(rows, cols, num_generaciones):
     estado_actual = generar_estado_inicial(rows, cols)
+    procesos = cpu_count()
     tiempo_inicio = time.time()
     generaciones = []
     for _ in range(num_generaciones):
         submatrices = []
-        for i in range(cpu_count()):
-            subfilas = rows // cpu_count()
+        for i in range(procesos):
+            subfilas = rows // procesos
             submatriz = estado_actual[i * subfilas: (i + 1) * subfilas, :]
             submatrices.append((submatriz, subfilas, cols))
         
-        with Pool(cpu_count()) as pool:
-            resultado = pool.starmap(siguiente_generacion_wrapper, submatrices)
+        with Pool(procesos) as pool:
+            resultado = pool.starmap(siguiente_generacion, submatrices)
         
         estado_actual = np.concatenate(resultado)
         generaciones.append(np.copy(estado_actual))
@@ -73,42 +66,52 @@ def juego_vida_paralelo(rows, cols, num_generaciones):
     tiempo_ejecucion = tiempo_fin - tiempo_inicio
     return tiempo_ejecucion, generaciones
 
-def update(frame, ax, generaciones_secuencial, generaciones_paralelo):
-    ax[0].clear()
-    ax[0].matshow(generaciones_secuencial[frame], cmap='binary')
-    ax[0].set_title(f'Secuencial: {frame+1}')
+def update_secuencial(frame, ax, generaciones_secuencial):
+    ax.clear()
+    ax.matshow(generaciones_secuencial[frame], cmap='binary')
+    ax.set_title(f'Secuencial: {frame+1}')
 
-    ax[1].clear()
-    ax[1].matshow(generaciones_paralelo[frame], cmap='binary')
-    ax[1].set_title(f'Paralelo - Generación: {frame+1}')
+def update_paralelo(frame, ax, generaciones_paralelo):
+    ax.clear()
+    ax.matshow(generaciones_paralelo[frame], cmap='binary')
+    ax.set_title(f'Paralelo: {frame+1}')
 
 if __name__ == "__main__":
-    filas = 1000
-    columnas = 1000
-    num_generaciones = 10
+    filas = 2000
+    columnas = 2000
+    num_generaciones = 3
 
+    print()
     print("Ejecutando la versión secuencial...")
     tiempo_secuencial, generaciones_secuencial = juego_vida_secuencial(filas, columnas, num_generaciones)
     print(f"Tiempo de ejecución secuencial para {num_generaciones} generaciones: {tiempo_secuencial} segundos")
 
     rendimiento_secuencial = num_generaciones / tiempo_secuencial
-    print(f"Rendimiento Secuencial: {rendimiento_secuencial}")
+    print(f"Throughput (Secuencial): {rendimiento_secuencial} generaciones por segundo")
+    print()
+
+    fig, ax = plt.subplots(1, 1)  
+    anim = FuncAnimation(fig, update_secuencial, frames=num_generaciones, fargs=(ax, generaciones_secuencial), repeat=False)
+
+    plt.show()
 
     print("Ejecutando la versión paralela...")
     tiempo_paralelo, generaciones_paralelo = juego_vida_paralelo(filas, columnas, num_generaciones)
     print(f"Tiempo de ejecución paralela para {num_generaciones} generaciones: {tiempo_paralelo} segundos")
 
     rendimiento_paralelo = num_generaciones / tiempo_paralelo
-    print(f"Rendimiento Paralelo: {rendimiento_paralelo}")
+    print(f"Throughput (Paralelo): {rendimiento_paralelo} generaciones por segundo")
 
-    num_cpus = cpu_count()
-    print("Número de CPUs usados:", num_cpus)
+    num_cpus = 6
+    print("Número de procesadores", num_cpus)
 
     speed_up = tiempo_secuencial / tiempo_paralelo
     print(f"Speed-up: {speed_up}")
 
-    fig, ax = plt.subplots(1, 2)
+    efficiency = (speed_up / num_cpus) * 100 
+    print(f"Efficiency: {efficiency} %")  
 
-    anim = FuncAnimation(fig, update, frames=num_generaciones, fargs=(ax, generaciones_secuencial, generaciones_paralelo), repeat=False)
+    fig, ax = plt.subplots(1, 1) 
+    anim = FuncAnimation(fig, update_paralelo, frames=num_generaciones, fargs=(ax, generaciones_paralelo), repeat=False)
 
     plt.show()
